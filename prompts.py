@@ -81,8 +81,10 @@ Small fixes (1 file): no task list and no questions."""
 AI_RULES = """# Tech Stack (runtime of this studio)
 - The app is a static web page rendered in an iframe. Entry point: index.html. Its <head> MUST contain the line <!--RUNTIME-->
   (the studio injects React 18, ReactDOM, Babel-standalone and Tailwind CSS there).
-- React is global: write `const { useState, useEffect, useMemo, useRef } = React;` once in the first script. NO import/export,
-  NO npm, NO external CDNs, NO fetch to external hosts.
+- React 18 and ReactDOM are globals, and ALL React APIs are ALSO ready as globals: useState, useEffect, useLayoutEffect, useMemo, useRef,
+  useCallback, useReducer, useContext, createContext, Fragment, memo, forwardRef... Use them directly. NEVER write
+  `const { useState } = React`, never declare them again. There is NO bundler: NEVER use import, export, export default or require
+  (they crash in the browser with "exports is not defined"). NO npm, NO external CDNs, NO fetch to external hosts.
 - JSX lives in <script type="text/babel">. To split code into files put them under src/ (src/components/X.jsx, src/pages/Y.jsx,
   src/utils/z.js) and include them in index.html in dependency order with
   <script type="text/babel" src="src/components/X.jsx"></script>. Files share one global scope: declare components as top-level
@@ -90,6 +92,7 @@ AI_RULES = """# Tech Stack (runtime of this studio)
 - Styling: Tailwind utility classes. Custom CSS only in styles.css linked via <link rel="stylesheet" href="styles.css">.
 - Icons: inline SVG or emoji (no icon packages). Build UI components yourself with Tailwind (no shadcn available).
 - STRICT SYNTAX RULES (the code is compiled in the browser, one mistake breaks the whole app):
+  0. Components are plain top-level declarations: `function App() {...}` (no export). Files see each other's top-level names through the global scope.
   1. Never declare the same top-level name (const/let/class/function) in two files or twice. Declare each constant ONCE.
   2. Strings containing an apostrophe or quotes: use double quotes or template literals, e.g. "узкие 'места'". Never nest the same quote type.
   3. JSX attributes only inside the opening tag: className={cond ? "a" : "b"} must contain ALL classes, never put extra words after }.
