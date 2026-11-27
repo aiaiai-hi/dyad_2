@@ -103,18 +103,77 @@ def runtime():
 def bundle(fs):
     """Инлайнит локальные <script src> и <link href> проекта в один HTML."""
     h = fs.get("index.html", "")
+    n = lambda x: re.sub(r"^\.?/", "", x)
     h = re.sub(r'<script([^>]*?)\s+src="([^"]+)"([^>]*)></script>',
-               lambda m: f"<script{m.group(1)}{m.group(3)}>{fs[m.group(2)]}</script>" if m.group(2) in fs else m.group(0), h)
-    h = re.sub(r'<link[^>]*href="([^"]+)"[^>]*>', lambda m: f"<style>{fs[m.group(1)]}</style>" if m.group(1) in fs else m.group(0), h)
+               lambda m: f"<script{m.group(1)}{m.group(3)}>{fs[n(m.group(2))]}</script>" if n(m.group(2)) in fs else m.group(0), h)
+    h = re.sub(r'<link[^>]*href="([^"]+)"[^>]*>', lambda m: f"<style>{fs[n(m.group(1))]}</style>" if n(m.group(1)) in fs else m.group(0), h)
     return h.replace("<!--RUNTIME-->", runtime())
+VENDOR = ("react.js", "react-dom.js", "babel.js", "tailwind.js")
+RUNNER = r"""
+import os, re
+from pathlib import Path
+import streamlit as st
+import streamlit.components.v1 as components
+
+SITE = Path(__file__).parent / "site"
+st.set_page_config(page_title=TITLE, layout="wide", initial_sidebar_state="collapsed")
+st.markdown("<style>.block-container{padding:0!important;max-width:100%!important}header,footer,#MainMenu{visibility:hidden}</style>",
+            unsafe_allow_html=True)
+
+def runtime():
+    v = SITE / "vendor"
+    names = [n for n in ("react.js", "react-dom.js", "babel.js", "tailwind.js") if (v / n).exists()]
+    if names: return "".join(f"<script>{(v / n).read_text()}</script>" for n in names) + ERR
+    return CDN + ERR
+
+@st.cache_data
+def build():
+    fs = {p.relative_to(SITE).as_posix(): p.read_text() for p in SITE.rglob("*") if p.is_file() and "vendor" not in p.parts}
+    n = lambda x: re.sub(r"^\.?/", "", x)
+    h = fs.get("index.html", "")
+    h = re.sub(r'<script([^>]*?)\s+src="([^"]+)"([^>]*)></script>',
+               lambda m: f"<script{m.group(1)}{m.group(3)}>{fs[n(m.group(2))]}</script>" if n(m.group(2)) in fs else m.group(0), h)
+    h = re.sub(r'<link[^>]*href="([^"]+)"[^>]*>',
+               lambda m: f"<style>{fs[n(m.group(1))]}</style>" if n(m.group(1)) in fs else m.group(0), h)
+    return h.replace("<!--RUNTIME-->", runtime())
+
+components.html(build(), height=int(os.getenv("APP_HEIGHT", "900")), scrolling=True)
+"""
+
 def export_zip(pid, fs):
+    """Пакет для развёртывания через Streamlit: main.py + site/ (исходники приложения) + requirements + Dockerfile + README."""
+    title = jload(pid, "meta.json", {}).get("title", pid)
+    v = Path("vendor"); have = [n for n in VENDOR if (v / n).exists()]
+    main = f"TITLE = {title!r}\nCDN = {CDN!r}\nERR = {ERR!r}\n" + RUNNER
+    net = "" if have else ("\n> ⚠️ React, Babel и Tailwind грузятся с CDN (unpkg, cdn.tailwindcss.com), нужен интернет.\n"
+                           "> Для закрытой сети положите react.js, react-dom.js, babel.js, tailwind.js в `site/vendor/`: они подхватятся сами.\n")
     b = io.BytesIO()
-    with zipfile.ZipFile(b, "w") as z:
-        z.writestr("site/index.html", bundle(fs))
-        z.writestr("server.py", "import http.server,socketserver,os\nos.chdir('site')\nsocketserver.TCPServer(('',8080),http.server.SimpleHTTPRequestHandler).serve_forever()\n")
-        z.writestr("Dockerfile", 'FROM python:3.12-slim\nWORKDIR /app\nCOPY . .\nEXPOSE 8080\nCMD ["python","server.py"]\n')
-        z.writestr("README.md", "# Развёртывание\n`docker build -t myapp . && docker run -p 8080:8080 myapp`\nили `python server.py` → http://localhost:8080\n")
-        for k, v in fs.items(): z.writestr(f"source/{k}", v)  # исходники для дальнейшей правки
+    with zipfile.ZipFile(b, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("main.py", main)
+        z.writestr("requirements.txt", "streamlit>=1.40\n")
+        for k, c in fs.items(): z.writestr(f"site/{k}", c)  # index.html сохраняет <!--RUNTIME-->, main.py подставляет React
+        for n in have: z.write(v / n, f"site/vendor/{n}")
+        z.writestr("Dockerfile", 'FROM python:3.12-slim\nWORKDIR /app\nCOPY . .\nRUN pip install --no-cache-dir -r requirements.txt\n'
+                   'EXPOSE 8501\nCMD ["streamlit","run","main.py","--server.port=8501","--server.address=0.0.0.0"]\n')
+        z.writestr("README.md", f"""# {title}
+Приложение для Streamlit. `main.py` читает папку `site/` (index.html, *.jsx, styles.css), собирает в один HTML и показывает на странице.
+Интерфейс (React) работает в браузере, Python отдаёт страницу.
+{net}
+## Streamlit Community Cloud / внутренний Streamlit
+Загрузите содержимое архива в репозиторий (рядом `main.py`, `requirements.txt`, папка `site/`), главный файл: `main.py`.
+
+## Локально
+    pip install -r requirements.txt
+    streamlit run main.py
+
+## Docker
+    docker build -t myapp . && docker run -p 8501:8501 myapp
+
+## Настройки
+- Высота области приложения: переменная `APP_HEIGHT` (по умолчанию 900 пикселей).
+- Правки кода: меняйте файлы в `site/`, затем перезапустите Streamlit (результат кэшируется).
+- Данные приложение хранит в localStorage браузера: у каждого пользователя свои.
+""")
     return b.getvalue()
 
 # ---------- LLM ----------
