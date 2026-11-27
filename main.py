@@ -8,8 +8,9 @@ from openai import OpenAI
 import prompts as P
 
 ROOT = Path(os.getenv("PROJECTS_DIR", "projects")); ROOT.mkdir(exist_ok=True)
-MODEL = os.getenv("LLM_MODEL", "gpt-4o")
-client = OpenAI(base_url=os.getenv("LLM_BASE_URL") or None, api_key=os.getenv("LLM_API_KEY", "none"))
+SETF = ROOT / "settings.json"  # base_url и модель сохраняются на диск, API-ключ только в сессии
+def get_client():
+    return OpenAI(base_url=st.session_state.base_url.strip() or None, api_key=st.session_state.api_key.strip() or "none")
 
 TAGS = re.compile(r'<(think|dyad-write|dyad-rename|dyad-delete|dyad-chat-summary|dyad-suggested-prompts|dyad-plan'
                   r'|dyad-security-finding|dyad-command)\b([^>]*)>(.*?)(</\1>|$)', re.S)
@@ -126,6 +127,10 @@ def system_for(mode, fs):
 st.set_page_config(page_title="Vibe Studio", layout="wide")
 st.markdown(CSS, unsafe_allow_html=True)
 st.session_state.setdefault("pid", new_project()); st.session_state.setdefault("mode", "Build"); st.session_state.setdefault("rev", 0)
+_s = json.loads(SETF.read_text()) if SETF.exists() else {}
+st.session_state.setdefault("base_url", _s.get("base_url", os.getenv("LLM_BASE_URL", "")))
+st.session_state.setdefault("model", _s.get("model", os.getenv("LLM_MODEL", "gpt-4o")))
+st.session_state.setdefault("api_key", os.getenv("LLM_API_KEY", ""))
 queue = st.session_state.pop("queue", None)           # (режим, текст) от кнопок: чипы, inspiration, «принять план»
 if queue: st.session_state.mode = queue[0]
 
@@ -136,6 +141,17 @@ with st.sidebar:
     if st.session_state.pid not in ps: st.session_state.pid = ps[0]
     st.session_state.pid = st.radio("Проекты", ps, index=ps.index(st.session_state.pid),
                                     format_func=lambda x: jload(x, "meta.json", {}).get("title", x))
+with st.sidebar.expander("⚙️ Настройки LLM", expanded=not st.session_state.api_key):
+    st.text_input("Base URL", key="base_url", placeholder="https://api.openai.com/v1")
+    st.text_input("API key", key="api_key", type="password")
+    st.text_input("Модель", key="model", placeholder="gpt-4o")
+    if st.button("Загрузить список моделей", use_container_width=True):
+        try: st.session_state.models = sorted(m.id for m in get_client().models.list())
+        except Exception as e: st.error(f"Не удалось получить список: {e}")
+    if st.session_state.get("models"):
+        st.selectbox("Выбрать из списка", st.session_state.models, index=None, placeholder="Выберите модель",
+                     key="model_pick", on_change=lambda: st.session_state.update(model=st.session_state.model_pick))
+    SETF.write_text(json.dumps({"base_url": st.session_state.base_url, "model": st.session_state.model}))
 pid = st.session_state.pid
 msgs = jload(pid, "chat.json", []); fs = files(pid)
 
@@ -173,7 +189,7 @@ with chat:
             with st.chat_message("assistant"):
                 ph = st.empty(); acc = ""
                 try:
-                    stream = client.chat.completions.create(model=MODEL, stream=True,
+                    stream = get_client().chat.completions.create(model=st.session_state.model, stream=True,
                         messages=[{"role": "system", "content": system_for(mode, fs)}] + [{"role": m["role"], "content": m["content"]} for m in msgs])
                     for ch in stream:
                         acc += (ch.choices[0].delta.content or "") if ch.choices else ""
@@ -203,7 +219,7 @@ with side:
             if st.button("🛡 Security review", use_container_width=True):
                 with st.spinner("Анализирую код…"):
                     ctx = "\n".join(f'<file path="{k}">\n{v}\n</file>' for k, v in fs.items())
-                    r = client.chat.completions.create(model=MODEL, messages=[{"role": "system", "content": P.SECURITY + "\n\n" + ctx},
+                    r = get_client().chat.completions.create(model=st.session_state.model, messages=[{"role": "system", "content": P.SECURITY + "\n\n" + ctx},
                                                                               {"role": "user", "content": "Run the security review."}])
                     st.session_state[f"sec_{pid}"] = r.choices[0].message.content
             if st.session_state.get(f"sec_{pid}"): render(st.empty(), st.session_state[f"sec_{pid}"])
