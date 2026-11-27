@@ -16,10 +16,27 @@ TAGS = re.compile(r'<(think|dyad-write|dyad-rename|dyad-delete|dyad-chat-summary
                   r'|dyad-security-finding|dyad-command)\b([^>]*)>(.*?)(</\1>|$)', re.S)
 ATTR = re.compile(r'([\w-]+)="([^"]*)"')
 CSS = """<style>
-.block-container{padding-top:1rem;max-width:100%}header[data-testid="stHeader"]{background:transparent}
-.card{border:1px solid #3a3f4b;border-radius:10px;margin:8px 0;background:#1b1e26;font-size:13px}
-.card summary{padding:8px 12px;cursor:pointer;color:#c9d1d9}.card .st{float:right;color:#7ee787}.card .w{color:#f0b429}
-.card pre{margin:0;padding:10px 12px;max-height:240px;overflow:auto;border-top:1px solid #3a3f4b;color:#9da7b3;font-size:12px;white-space:pre-wrap}
+:root{--g1:#16a34a;--g2:#15803d;--line:#cfe5d7}
+.stApp{background:linear-gradient(180deg,#f6fbf7 0%,#eaf6ee 100%)}
+.block-container{padding-top:1rem;max-width:100%}
+header[data-testid="stHeader"]{background:transparent}
+[data-testid="stSidebar"]{background:linear-gradient(180deg,#0b2e1f,#114030)}
+[data-testid="stSidebar"] *{color:#e7f6ec}
+[data-testid="stSidebar"] .stButton>button{background:var(--g1);color:#fff;border:0}
+.brand{display:flex;align-items:center;gap:10px;margin:4px 0 16px}.brand b{font-size:19px;letter-spacing:.2px}
+.brand small{display:block;font-size:11px;opacity:.7;font-weight:400}
+.logo{width:36px;height:36px;border-radius:11px;background:linear-gradient(135deg,#86efac,#16a34a);display:grid;place-items:center;color:#06240f;font-weight:800;box-shadow:0 4px 14px rgba(22,163,74,.45)}
+.stButton>button,.stDownloadButton>button{border-radius:10px;border:1px solid var(--line);background:#fff;color:#14532d;font-weight:500;transition:all .15s}
+.stButton>button:hover,.stDownloadButton>button:hover{border-color:var(--g1);color:var(--g2);transform:translateY(-1px);box-shadow:0 6px 16px rgba(22,163,74,.18)}
+.stButton>button[kind="primary"]{background:var(--g1);color:#fff;border:0}
+[data-testid="stChatMessage"]{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 14px;box-shadow:0 1px 3px rgba(16,64,40,.05)}
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]){background:#e6f6ec}
+[data-testid="stChatInput"]{border-radius:14px;border:1px solid var(--line)}
+.stTabs [aria-selected="true"]{color:var(--g2);font-weight:600}.stTabs [data-baseweb="tab-highlight"]{background:var(--g1)}
+iframe{border:1px solid var(--line);border-radius:14px;background:#fff}
+.card{border:1px solid var(--line);border-radius:12px;margin:8px 0;background:#fff;font-size:13px}
+.card summary{padding:9px 12px;cursor:pointer;color:#14532d}.card .st{float:right;color:var(--g1);font-weight:700}.card .w{color:#d97706}
+.card pre{margin:0;padding:10px 12px;max-height:240px;overflow:auto;border-top:1px solid var(--line);background:#f3faf5;color:#3f5b4b;font-size:12px;white-space:pre-wrap}
 </style>"""
 
 # ---------- проекты ----------
@@ -55,6 +72,20 @@ def apply(pid, text):
         elif kind == "dyad-rename" and (s := safe(pid, a.get("from", ""))) and (d := safe(pid, a.get("to", ""))) and s.is_file():
             d.parent.mkdir(parents=True, exist_ok=True); s.rename(d); changed = True
     return changed
+
+def lint(fs):
+    """Быстрые проверки того, что чаще всего ломает приложение: дубли имён и ссылки на несуществующие файлы."""
+    issues, seen = [], {}
+    for k, c in fs.items():
+        if k.endswith((".js", ".jsx")):
+            for m in re.finditer(r"^(const|let|class|function|var)\s+(\w+)", c, re.M): seen.setdefault(m.group(2), []).append((k, m.group(1)))
+    for n, ds in seen.items():
+        if len(ds) > 1 and any(d[1] in ("const", "let", "class") for d in ds):
+            issues.append(f"`{n}` объявлено повторно ({', '.join(sorted({d[0] for d in ds}))}); оставь ровно одно объявление")
+    nrm = lambda x: re.sub(r"^\.?/", "", x)
+    for ref in re.findall(r'<(?:script[^>]*src|link[^>]*href)="([^"]+)"', fs.get("index.html", "")):
+        if not ref.startswith(("http", "//", "data:")) and nrm(ref) not in fs: issues.append(f"index.html ссылается на несуществующий файл {ref}")
+    return issues
 
 # ---------- рендер чата ----------
 def card(icon, title, sub="", status="", body="", open_=False):
@@ -92,9 +123,13 @@ CDN = ('<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"
        '<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>'
        '<script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>'
        '<script src="https://cdn.tailwindcss.com/3.4.17"></script>')
-ERR = ('<script>addEventListener("error",e=>{var d=document.createElement("pre");d.style="position:fixed;bottom:0;left:0;right:0;'
-       'margin:0;background:#3b1219;color:#ffb3b3;padding:8px;font:12px monospace;z-index:9999;white-space:pre-wrap";'
-       'd.textContent="ERROR: "+e.message+" ("+(e.filename||"").split("/").pop()+":"+e.lineno+")";document.body.appendChild(d)})</script>')
+ERR = r"""<script>(function(){
+function show(t){var d=document.getElementById('__err');if(!d){d=document.createElement('pre');d.id='__err';d.style.cssText='position:fixed;bottom:0;left:0;right:0;max-height:45%;overflow:auto;margin:0;background:#3b1219;color:#ffb3b3;padding:10px;font:12px monospace;z-index:99999;white-space:pre-wrap';document.body.appendChild(d)}d.textContent+=t+"\n"}
+var ce=console.error;console.error=function(){try{show('ERROR: '+[].slice.call(arguments).map(function(a){return a&&a.message?a.message:String(a)}).join(' '))}catch(e){}ce.apply(console,arguments)};
+addEventListener('error',function(e){if(e.message&&e.message!=='Script error.')show('ERROR: '+e.message+' ('+(e.filename||'').split('/').pop()+':'+e.lineno+')')});
+addEventListener('unhandledrejection',function(e){show('ERROR: '+(e.reason&&e.reason.message||e.reason))});
+addEventListener('DOMContentLoaded',function(){if(!window.Babel)return;document.querySelectorAll('script[type="text/babel"]').forEach(function(s){try{Babel.transform(s.textContent,{presets:['react']})}catch(e){show('SYNTAX ['+(s.getAttribute('data-name')||'index.html')+']: '+e.message)}})});
+})();</script>"""
 def runtime():
     v = Path("vendor")  # офлайн: vendor/react.js, react-dom.js, babel.js, tailwind.js
     if (v / "react.js").exists():
@@ -102,10 +137,10 @@ def runtime():
     return CDN + ERR
 def bundle(fs):
     """Инлайнит локальные <script src> и <link href> проекта в один HTML."""
-    h = fs.get("index.html", "")
+    h = re.sub(r'<script[^>]*src="https?://[^"]*(?:tailwindcss|react|babel)[^"]*"[^>]*></script>', "", fs.get("index.html", ""))
     n = lambda x: re.sub(r"^\.?/", "", x)
     h = re.sub(r'<script([^>]*?)\s+src="([^"]+)"([^>]*)></script>',
-               lambda m: f"<script{m.group(1)}{m.group(3)}>{fs[n(m.group(2))]}</script>" if n(m.group(2)) in fs else m.group(0), h)
+               lambda m: f'<script{m.group(1)}{m.group(3)} data-name="{n(m.group(2))}">{fs[n(m.group(2))]}</script>' if n(m.group(2)) in fs else m.group(0), h)
     h = re.sub(r'<link[^>]*href="([^"]+)"[^>]*>', lambda m: f"<style>{fs[n(m.group(1))]}</style>" if n(m.group(1)) in fs else m.group(0), h)
     return h.replace("<!--RUNTIME-->", runtime())
 VENDOR = ("react.js", "react-dom.js", "babel.js", "tailwind.js")
@@ -130,9 +165,9 @@ def runtime():
 def build():
     fs = {p.relative_to(SITE).as_posix(): p.read_text() for p in SITE.rglob("*") if p.is_file() and "vendor" not in p.parts}
     n = lambda x: re.sub(r"^\.?/", "", x)
-    h = fs.get("index.html", "")
+    h = re.sub(r'<script[^>]*src="https?://[^"]*(?:tailwindcss|react|babel)[^"]*"[^>]*></script>', "", fs.get("index.html", ""))
     h = re.sub(r'<script([^>]*?)\s+src="([^"]+)"([^>]*)></script>',
-               lambda m: f"<script{m.group(1)}{m.group(3)}>{fs[n(m.group(2))]}</script>" if n(m.group(2)) in fs else m.group(0), h)
+               lambda m: f'<script{m.group(1)}{m.group(3)} data-name="{n(m.group(2))}">{fs[n(m.group(2))]}</script>' if n(m.group(2)) in fs else m.group(0), h)
     h = re.sub(r'<link[^>]*href="([^"]+)"[^>]*>',
                lambda m: f"<style>{fs[n(m.group(1))]}</style>" if n(m.group(1)) in fs else m.group(0), h)
     return h.replace("<!--RUNTIME-->", runtime())
@@ -183,7 +218,7 @@ def system_for(mode, fs):
     return base + ctx
 
 # ---------- UI ----------
-st.set_page_config(page_title="Vibe Studio", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Vibe Studio", page_icon="🌿", layout="wide", initial_sidebar_state="expanded")
 st.markdown(CSS, unsafe_allow_html=True)
 if "pid" not in st.session_state: st.session_state.pid = new_project()
 st.session_state.setdefault("mode", "Build"); st.session_state.setdefault("rev", 0)
@@ -195,7 +230,7 @@ queue = st.session_state.pop("queue", None)           # (режим, текст)
 if queue: st.session_state.mode = queue[0]
 
 with st.sidebar:
-    st.markdown("### ⚡ Vibe Studio")
+    st.markdown('<div class="brand"><div class="logo">V</div><div><b>Vibe Studio</b><small>AI-разработка приложений</small></div></div>', unsafe_allow_html=True)
     if st.button("＋ Новое приложение", use_container_width=True): st.session_state.pid = new_project(); st.rerun()
     ps = sorted([p.name for p in ROOT.iterdir() if p.is_dir() and ((p / "chat.json").exists() or p.name == st.session_state.pid)], reverse=True)
     if st.session_state.pid not in ps: st.session_state.pid = ps[0]
@@ -260,7 +295,11 @@ with chat:
         changed = apply(pid, acc) if mode == "Build" else False
         if not jload(pid, "meta.json", {}).get("title"): jsave(pid, "meta.json", {"title": msgs[0]["content"][:40]})
         msgs.append({"role": "assistant", "content": acc, "version": snapshot(pid) if changed else None})
-        jsave(pid, "chat.json", msgs); st.rerun()
+        jsave(pid, "chat.json", msgs)
+        issues = lint(files(pid)) if changed else []
+        if issues and not prompt.startswith("Автопроверка"):   # одна автоматическая попытка исправления
+            st.session_state.queue = ("Build", "Автопроверка нашла проблемы, исправь:\n- " + "\n- ".join(issues))
+        st.rerun()
 
 with side:
     t1, t2, t3 = st.tabs(["👁 Превью", "</> Код", "⬇ Экспорт и проверка"])
