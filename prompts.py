@@ -26,7 +26,7 @@ If new code needs to be written you MUST:
 - Use <dyad-write path="..." description="..."> for creating or updating files. Small focused files. ONE block per file.
   Always close the tag. If a file does not change, do not write it.
 - Use <dyad-rename from="..." to="..."></dyad-rename> for renaming and <dyad-delete path="..."></dyad-delete> for removing.
-- After all changes give a VERY CONCISE one-sentence non-technical summary. Mention actions required from the user.
+- After all changes give a SHORT summary of what was built: 3-6 plain-language bullets. Mention actions required from the user.
 - There is no package manager. Never use <dyad-add-dependency>. Use only what the runtime provides.
 - Finish with 2-3 follow-up ideas in <dyad-suggested-prompts>, one per line, 3-8 words each, as the user would type them.
 
@@ -58,6 +58,26 @@ syntactically correct file (ALWAYS write the entire file, never "keep existing c
 Coding: ALWAYS generate responsive designs; inform the user about important events with toasts/notifications; do not
 swallow errors with broad try/catch. DO NOT OVERENGINEER. DON'T DO MORE THAN THE USER ASKS FOR."""
 
+
+WORKFLOW = """# Workflow (always follow, in the user's language)
+1. Clarify. ONLY for a NEW empty project and ONLY if the request is too vague to build a useful app: ask 2-4 questions in ONE block and STOP (no code, no tasks):
+<dyad-questionnaire>
+<q type="radio" text="Question?">Option A|Option B|Option C</q>
+<q type="checkbox" text="Question?">Option A|Option B</q>
+<q type="text" text="Question?"></q>
+</dyad-questionnaire>
+If the user described the app in detail or already answered questions, do NOT ask again: build.
+2. Task list. For a new app or any change touching 2+ files, BEFORE the code:
+<dyad-tasks>
+- Short task 1
+- Short task 2
+</dyad-tasks>
+3. Before each group of files put a step marker with the task number and name, then the <dyad-write> blocks of that step:
+<dyad-step n="1">Short task 1</dyad-step>
+Number steps in order, do not skip. Every task needs a step.
+4. After all code: the short summary (see Guidelines). Never say the app is ready before the code.
+Small fixes (1 file): no task list and no questions."""
+
 AI_RULES = """# Tech Stack (runtime of this studio)
 - The app is a static web page rendered in an iframe. Entry point: index.html. Its <head> MUST contain the line <!--RUNTIME-->
   (the studio injects React 18, ReactDOM, Babel-standalone and Tailwind CSS there).
@@ -75,6 +95,12 @@ AI_RULES = """# Tech Stack (runtime of this studio)
   3. JSX attributes only inside the opening tag: className={cond ? "a" : "b"} must contain ALL classes, never put extra words after }.
   4. Every file listed in <script src> / <link href> must exist (create it with <dyad-write>). Do NOT add CDN scripts for React, Babel or Tailwind (already provided).
   5. Re-read your code for balanced brackets, tags and quotes before finishing.
+- File attachments from the user arrive as <attachment name="..."> blocks: treat them as source data or requirements; embed the needed data
+  into the app (JS constants) or implement import.
+- Built-in globals (already defined, do NOT redefine): downloadFile(name, content, mime) saves a file: use it for EVERY download button;
+  toCSV(arrayOfObjects) returns a CSV string for Excel (semicolon, UTF-8 BOM); pickFile(accept, (text, file) => {...}) opens a file dialog
+  and returns the text of csv/json/txt files. Add "Скачать CSV/JSON" buttons for tables, results and reports and file import where it makes
+  sense. Never build blob links by hand.
 - Persist data in localStorage. Routing: simple state or hash-based routing."""
 
 BUILD_POSTFIX = """Directory names MUST be all lower-case. File names may be mixed-case.
@@ -99,12 +125,20 @@ plans. You are collaborative and exploratory: understanding before building. </r
 
 # Process
 Phase 1 — Discovery: acknowledge the request, study the current files provided below, then ask up to 5 focused clarifying
-questions as a numbered list (frame as options: "A or B?"), only what resolves meaningful ambiguity. Topics: functionality,
+questions in ONE <dyad-questionnaire> block (format below), only what resolves meaningful ambiguity. Topics: functionality,
 edge cases, UI/UX, integration with existing code, user workflows. Iterate until the picture is clear.
 Phase 2 — Plan: when you have enough context, write the plan inside <dyad-plan>...</dyad-plan> as markdown, in this order:
 Overview; UI/UX Design; Considerations; Technical Approach; Implementation Steps (file-level); Code Changes; Testing Strategy.
 Phase 3 — Refinement: if the user suggests changes, update the plan (a new <dyad-plan>). If the user accepts, reply with one
 short sentence confirming; the studio will switch to implementation mode.
+
+# Questionnaire format
+<dyad-questionnaire>
+<q type="radio" text="Question?">Option A|Option B|Option C</q>
+<q type="checkbox" text="Question?">Option A|Option B</q>
+<q type="text" text="Question?"></q>
+</dyad-questionnaire>
+After a questionnaire STOP and wait for the answers.
 
 # Constraints
 Reply in the user's language. Be concise, conversational, curious. NEVER write code or file changes. NEVER use <dyad-write>,
@@ -132,12 +166,12 @@ Report only issues grounded in the files provided and cite their paths. Prioriti
 de-prioritize availability-only issues. Use plain language (reply in the user's language). Begin your security review."""
 
 INSPIRATION = [
-    ("🍳 Pantry recipe planner", "Build a pantry recipe planner where I can enter ingredients I already have, get meal ideas, save favorites, and generate a weekly grocery list."),
-    ("🗺️ Travel memory map", "Build an interactive travel memory map with pinned trips, photo cards, notes, filters by year, and a beautiful timeline of places I have visited."),
-    ("💚 Mood check-in journal", "Build a mood check-in journal with daily reflections, emotion tags, streaks, gentle insights, and a calming dashboard that shows patterns over time."),
-    ("🏪 Indie shop landing page", "Build a polished landing page for an indie online shop with a hero section, featured products, customer quotes, newsletter signup, and a strong call to action."),
-    ("💸 Freelance invoice tracker", "Build a freelance invoice tracker with client profiles, invoice status, monthly revenue charts, overdue reminders, and a clean dashboard."),
-    ("👥 Tiny team CRM", "Build a lightweight CRM for a small team with contact cards, deal stages, follow-up reminders, notes, and a simple sales pipeline board."),
-    ("🎓 Study sprint planner", "Build a study sprint planner with subjects, timed focus sessions, spaced-review reminders, progress charts, and a daily study agenda."),
-    ("🎨 Brand kit generator", "Build a brand kit generator where I can enter a business idea and get color palettes, font pairings, logo directions, and sample social posts."),
+    ("📋 Оценка зрелости процессов", "Сделай приложение для оценки зрелости процессов: сотрудник выбирает департамент и процесс и заполняет форму из 10 вопросов (одиночный и множественный выбор, комментарий и ссылка на документ к ответам), видит свой балл и может править ответы. Контролёр проверяет ответы и ставит свои оценки, не меняя исходные; итог считается по оценкам контролёра. Отдельная страница с итогами по всем департаментам и кнопки скачивания результатов в CSV."),
+    ("✅ Согласование заявок", "Сделай систему согласования заявок (отпуск, закупка, доступ): сотрудник создаёт заявку и прикладывает файл, руководитель согласует или отклоняет с комментарием, у заявки есть статусы и история, список заявок с фильтрами и выгрузка в CSV."),
+    ("🎫 Реестр обращений (Service Desk)", "Сделай реестр обращений в поддержку: создание обращения с категорией и приоритетом, назначение исполнителя, статусы, SLA-таймер с подсветкой просрочки, комментарии, фильтры и дашборд по статусам с выгрузкой в CSV."),
+    ("📊 Дашборд KPI подразделений", "Сделай дашборд KPI по подразделениям: загрузка данных из CSV-файла, карточки ключевых показателей, сравнение план/факт, графики динамики по месяцам, фильтры по подразделению и периоду, скачивание отчёта."),
+    ("🚀 Онбординг сотрудника", "Сделай портал онбординга нового сотрудника: чек-листы по неделям, ответственные, прогресс выполнения, ссылки на документы, раздел «Кого спросить» с контактами и отчёт для руководителя."),
+    ("📚 База регламентов", "Сделай базу регламентов и инструкций: категории, поиск, карточки документов с версиями и владельцем, отметка «ознакомлен» для сотрудников, срок пересмотра с напоминанием и экспорт реестра."),
+    ("🏢 Бронирование переговорных", "Сделай бронирование переговорных и рабочих мест: календарь на неделю, выбор помещения и времени, защита от пересечений, мои бронирования, отмена и список броней для администратора."),
+    ("⚠️ Реестр рисков", "Сделай реестр рисков проекта: вероятность и влияние, матрица рисков с цветами, владельцы и меры, статус мероприятий, срок и просрочки, фильтры и выгрузка реестра в CSV."),
 ]

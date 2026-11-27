@@ -1,6 +1,6 @@
 """Vibe Studio: Python-движок (Streamlit) + интерфейс на HTML/JS в папке frontend/ (компонент без сборки).
 Промпты адаптированы из Dyad (Apache-2.0), см. prompts.py."""
-import base64, io, json, os, re, shutil, threading, time, uuid, zipfile
+import base64, difflib, io, json, os, re, shutil, threading, time, uuid, zipfile
 from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
@@ -27,9 +27,10 @@ def jload(pid, name, default):
 def jsave(pid, name, data): (pdir(pid) / name).write_text(json.dumps(data, ensure_ascii=False))
 def new_project():
     pid = time.strftime("app-%m%d-%H%M%S-") + uuid.uuid4().hex[:4]; (pdir(pid) / "files").mkdir(parents=True, exist_ok=True); return pid
+def next_ver(pid):
+    v = pdir(pid) / "versions"; return len([d for d in v.glob("*") if d.name.isdigit()]) + 1 if v.exists() else 1
 def snapshot(pid):
-    v = pdir(pid) / "versions"; n = len(list(v.glob("*"))) + 1 if v.exists() else 1
-    shutil.copytree(pdir(pid) / "files", v / str(n)); return n
+    n = next_ver(pid); shutil.copytree(pdir(pid) / "files", pdir(pid) / "versions" / str(n)); return n
 def restore(pid, n):
     shutil.rmtree(pdir(pid) / "files"); shutil.copytree(pdir(pid) / "versions" / str(n), pdir(pid) / "files")
 def safe(pid, rel):
@@ -37,19 +38,26 @@ def safe(pid, rel):
     return p if base in p.parents else None
 
 def apply(pid, text):
-    """Применяет закрытые теги Dyad. Возвращает True, если файлы изменились."""
-    changed = False
+    """Применяет закрытые теги Dyad. Возвращает {путь: {path, status A/M/D/R, add, del}}."""
+    out = {}
+    def cnt(old, new):
+        d = list(difflib.unified_diff((old or "").splitlines(), (new or "").splitlines(), lineterm="", n=0))
+        return (sum(1 for l in d if l.startswith("+") and not l.startswith("+++")), sum(1 for l in d if l.startswith("-") and not l.startswith("---")))
     for m in TAGS.finditer(text):
-        kind, a, body, closed = m.group(1), dict(ATTR.findall(m.group(2))), m.group(3), bool(m.group(4))
+        kind, at, body, closed = m.group(1), dict(ATTR.findall(m.group(2))), m.group(3), bool(m.group(4))
         if not closed: continue
-        if kind == "dyad-chat-summary": jsave(pid, "meta.json", {"title": body.strip()})
-        elif kind == "dyad-write" and (p := safe(pid, a.get("path", ""))):
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(re.sub(r"^```\w*\n|\n```\s*$", "", body.strip("\n"))); changed = True
-        elif kind == "dyad-delete" and (p := safe(pid, a.get("path", ""))) and p.is_file(): p.unlink(); changed = True
-        elif kind == "dyad-rename" and (s := safe(pid, a.get("from", ""))) and (d := safe(pid, a.get("to", ""))) and s.is_file():
-            d.parent.mkdir(parents=True, exist_ok=True); s.rename(d); changed = True
-    return changed
+        if kind == "dyad-chat-summary":
+            if not jload(pid, "meta.json", {}).get("custom"): jsave(pid, "meta.json", {"title": body.strip()})
+        elif kind == "dyad-write" and (p := safe(pid, at.get("path", ""))):
+            new = re.sub(r"^```\w*\n|\n```\s*$", "", body.strip("\n")); old = p.read_text() if p.exists() else None
+            p.parent.mkdir(parents=True, exist_ok=True); p.write_text(new); ad, de = cnt(old, new)
+            out[at["path"]] = {"path": at["path"], "status": "A" if old is None else "M", "add": ad, "del": de}
+        elif kind == "dyad-delete" and (p := safe(pid, at.get("path", ""))) and p.is_file():
+            de = len(p.read_text().splitlines()); p.unlink(); out[at["path"]] = {"path": at["path"], "status": "D", "add": 0, "del": de}
+        elif kind == "dyad-rename" and (sp := safe(pid, at.get("from", ""))) and (d := safe(pid, at.get("to", ""))) and sp.is_file():
+            d.parent.mkdir(parents=True, exist_ok=True); sp.rename(d)
+            out[at["to"]] = {"path": f'{at["from"]} → {at["to"]}', "status": "R", "add": 0, "del": 0}
+    return out
 
 def lint(fs):
     """Быстрые проверки того, что чаще всего ломает приложение: дубли имён и ссылки на несуществующие файлы."""
@@ -76,7 +84,11 @@ var ce=console.error;console.error=function(){try{show('ERROR: '+[].slice.call(a
 addEventListener('error',function(e){if(e.message&&e.message!=='Script error.')show('ERROR: '+e.message+' ('+(e.filename||'').split('/').pop()+':'+e.lineno+')')});
 addEventListener('unhandledrejection',function(e){show('ERROR: '+(e.reason&&e.reason.message||e.reason))});
 addEventListener('DOMContentLoaded',function(){if(!window.Babel)return;document.querySelectorAll('script[type="text/babel"]').forEach(function(s){try{Babel.transform(s.textContent,{presets:['react']})}catch(e){show('SYNTAX ['+(s.getAttribute('data-name')||'index.html')+']: '+e.message)}})});
-})();</script>"""
+})();
+window.downloadFile=function(n,d,m){var b=new Blob([d],{type:m||"application/octet-stream"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=n;document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},500)};
+window.toCSV=function(rows){if(!rows||!rows.length)return"";var Q="\x22",k=Object.keys(rows[0]),q=function(v){v=v==null?"":String(v);return /[;\n\x22]/.test(v)?Q+v.replace(/\x22/g,Q+Q)+Q:v};return "\uFEFF"+[k.join(";")].concat(rows.map(function(r){return k.map(function(c){return q(r[c])}).join(";")})).join("\r\n")};
+window.pickFile=function(accept,cb){var i=document.createElement("input");i.type="file";i.accept=accept||"";i.onchange=function(){var f=i.files[0];if(!f)return;var r=new FileReader();r.onload=function(){cb(r.result,f)};r.readAsText(f)};i.click()};
+</script>"""
 def runtime():
     v = Path("vendor")  # офлайн: vendor/react.js, react-dom.js, babel.js, tailwind.js
     if (v / "react.js").exists():
@@ -161,7 +173,7 @@ def export_zip(pid, fs):
 # ---------- LLM ----------
 def system_for(mode, fs):
     ctx = ("\n\nТекущие файлы проекта:\n" + "\n".join(f'<file path="{k}">\n{v}\n</file>' for k, v in fs.items())) if fs else "\n\nПроект пока пуст."
-    base = {"Build": P.THINKING + "\n" + P.BUILD_PREFIX + "\n\n" + P.AI_RULES + "\n\n" + P.BUILD_POSTFIX, "Ask": P.ASK, "Plan": P.PLAN}[mode]
+    base = {"Build": P.THINKING + "\n" + P.BUILD_PREFIX + "\n\n" + P.WORKFLOW + "\n\n" + P.AI_RULES + "\n\n" + P.BUILD_POSTFIX, "Ask": P.ASK, "Plan": P.PLAN}[mode]
     return base + ctx
 
 def preview_html(fs, pid):
@@ -196,20 +208,28 @@ def start_job(pid, mode, prompt):
     msgs = jload(pid, "chat.json", []) + [{"role": "user", "content": prompt}]; jsave(pid, "chat.json", msgs)
     job = {"text": "", "done": False, "stop": False, "pid": pid, "mode": mode, "prompt": prompt}
     jid = uuid.uuid4().hex; jobs()[jid] = job; S.job = jid
-    hist = [{"role": m["role"], "content": m["content"]} for m in msgs]
+    hist = [{"role": m["role"], "content": m["content"] + ("\n\n(эти изменения пользователь отменил)" if m.get("undone") else "")} for m in msgs]
     threading.Thread(target=run_llm, daemon=True, args=(job, client(), S.model, system_for(mode, files(pid)), hist)).start()
 
 def finalize():
-    """Если фоновая генерация закончилась: применить файлы, сохранить версию, при необходимости запустить автоисправление."""
+    """Фоновая генерация закончилась: применить файлы, сохранить версии (до/после), собрать статус, при необходимости автоисправление."""
     job = current_job()
     if not job or not job["done"]: return
     pid, acc = job["pid"], job["text"]
-    changed = apply(pid, acc) if job["mode"] == "Build" else False
+    v = pdir(pid) / "versions"; v.mkdir(exist_ok=True); pre = v / "_pre"
+    shutil.rmtree(pre, ignore_errors=True); shutil.copytree(pdir(pid) / "files", pre)
+    had_app = bool(files(pid))
+    changes = list(apply(pid, acc).values()) if job["mode"] == "Build" else []
+    msg = {"role": "assistant", "content": acc, "mode": job["mode"]}
+    if changes:
+        base = next_ver(pid); pre.rename(v / str(base))
+        msg.update(version=snapshot(pid), base=base, status="updated" if had_app else "created", changes=changes)
+    else: shutil.rmtree(pre, ignore_errors=True)
     msgs = jload(pid, "chat.json", [])
     if not jload(pid, "meta.json", {}).get("title"): jsave(pid, "meta.json", {"title": msgs[0]["content"][:40]})
-    msgs.append({"role": "assistant", "content": acc, "version": snapshot(pid) if changed else None}); jsave(pid, "chat.json", msgs)
+    msgs.append(msg); jsave(pid, "chat.json", msgs)
     jobs().pop(S.job, None); S.job = None
-    issues = lint(files(pid)) if changed else []
+    issues = lint(files(pid)) if changes else []
     if issues and not job["prompt"].startswith("Автопроверка"):   # одна автоматическая попытка исправления
         start_job(pid, "Build", "Автопроверка нашла проблемы, исправь:\n- " + "\n- ".join(issues))
 
@@ -240,11 +260,21 @@ def handle(ev):
             except Exception as e: S.models = []; S.notice = f"Не удалось получить список моделей: {e}"
         else: S.notice = "Настройки сохранены"
         return True
+    if t == "rename":
+        if ev.get("title", "").strip(): jsave(ev["pid"], "meta.json", {"title": ev["title"].strip()[:60], "custom": True})
+        return True
     if current_job(): return False                       # во время генерации остальные события игнорируются
     if t == "send": S.mode = ev["mode"]; start_job(pid, ev["mode"], ev["text"])
     elif t == "new": S.pid = new_project()
     elif t == "select": S.pid = ev["pid"]
     elif t == "restore": restore(pid, int(ev["version"]))
+    elif t in ("undo", "retry"):
+        msgs = jload(pid, "chat.json", [])
+        if msgs and msgs[-1].get("base") is not None and not msgs[-1].get("undone"):
+            last = msgs[-1]; restore(pid, last["base"])
+            if t == "undo": last["undone"] = True; jsave(pid, "chat.json", msgs)
+            else:
+                prompt = msgs[-2]["content"]; jsave(pid, "chat.json", msgs[:-2]); start_job(pid, last.get("mode", "Build"), prompt)
     elif t == "export": S.dl = {"id": uuid.uuid4().hex, "name": f"{pid}.zip", "b64": base64.b64encode(export_zip(pid, files(pid))).decode()}
     elif t == "review":
         try:
