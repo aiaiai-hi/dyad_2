@@ -1,6 +1,6 @@
 """Vibe Studio v2: Dyad-подобный MVP на Streamlit. Превью в той же странице, приложения = HTML + React (без сборки).
 Промпты адаптированы из Dyad (Apache-2.0), см. prompts.py."""
-import io, json, os, re, shutil, time, zipfile, html as H
+import io, json, os, re, uuid, shutil, time, zipfile, html as H
 from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
@@ -31,7 +31,7 @@ def jload(pid, name, default):
     f = pdir(pid) / name; return json.loads(f.read_text()) if f.exists() else default
 def jsave(pid, name, data): (pdir(pid) / name).write_text(json.dumps(data, ensure_ascii=False))
 def new_project():
-    pid = time.strftime("app-%m%d-%H%M%S"); (pdir(pid) / "files").mkdir(parents=True); return pid
+    pid = time.strftime("app-%m%d-%H%M%S-") + uuid.uuid4().hex[:4]; (pdir(pid) / "files").mkdir(parents=True, exist_ok=True); return pid
 def snapshot(pid):
     v = pdir(pid) / "versions"; n = len(list(v.glob("*"))) + 1 if v.exists() else 1
     shutil.copytree(pdir(pid) / "files", v / str(n)); return n
@@ -126,7 +126,8 @@ def system_for(mode, fs):
 # ---------- UI ----------
 st.set_page_config(page_title="Vibe Studio", layout="wide")
 st.markdown(CSS, unsafe_allow_html=True)
-st.session_state.setdefault("pid", new_project()); st.session_state.setdefault("mode", "Build"); st.session_state.setdefault("rev", 0)
+if "pid" not in st.session_state: st.session_state.pid = new_project()
+st.session_state.setdefault("mode", "Build"); st.session_state.setdefault("rev", 0)
 _s = json.loads(SETF.read_text()) if SETF.exists() else {}
 st.session_state.setdefault("base_url", _s.get("base_url", os.getenv("LLM_BASE_URL", "")))
 st.session_state.setdefault("model", _s.get("model", os.getenv("LLM_MODEL", "gpt-4o")))
@@ -137,7 +138,7 @@ if queue: st.session_state.mode = queue[0]
 with st.sidebar:
     st.markdown("### ⚡ Vibe Studio")
     if st.button("＋ Новое приложение", use_container_width=True): st.session_state.pid = new_project(); st.rerun()
-    ps = sorted([p.name for p in ROOT.iterdir() if p.is_dir()], reverse=True)
+    ps = sorted([p.name for p in ROOT.iterdir() if p.is_dir() and ((p / "chat.json").exists() or p.name == st.session_state.pid)], reverse=True)
     if st.session_state.pid not in ps: st.session_state.pid = ps[0]
     st.session_state.pid = st.radio("Проекты", ps, index=ps.index(st.session_state.pid),
                                     format_func=lambda x: jload(x, "meta.json", {}).get("title", x))
