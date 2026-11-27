@@ -37,6 +37,26 @@ def safe(pid, rel):
     base = (pdir(pid) / "files").resolve(); p = (base / rel).resolve()
     return p if base in p.parents else None
 
+def norm_js(code, path=""):
+    """Приводит код «как для сборщика» к виду для браузера без сборки: убирает import/export, дубли `const {useState} = React`."""
+    base = re.sub(r"\W", "_", Path(path).stem) or "Component"
+    code = re.sub(r"""^[ \t]*import\s+(?:[\w*{}\s,$]+?\s+from\s+)?['"](?:react|react-dom(?:/client)?|\.{1,2}/[^'"]*|[^'"]*\.css)['"];?[ \t]*\n?""", "", code, flags=re.M)
+    code = re.sub(r"^[ \t]*export\s+default\s+(async\s+)?(function|class)\s+(\w+)", lambda m: f"{m.group(1) or ''}{m.group(2)} {m.group(3)}", code, flags=re.M)
+    code = re.sub(r"^[ \t]*export\s+default\s+(?:async\s+)?function\s*\(", f"function {base}(", code, flags=re.M)
+    code = re.sub(r"^[ \t]*export\s+default\s+\w+\s*;?[ \t]*$", "", code, flags=re.M)
+    code = re.sub(r"^[ \t]*export\s+default\s+", f"const {base} = ", code, flags=re.M)
+    code = re.sub(r"^[ \t]*export\s+(const|let|var|function|class|async\s+function)\b", r"\1", code, flags=re.M)
+    code = re.sub(r"""^[ \t]*export\s*\{[^}]*\}\s*(?:from\s*['"][^'"]*['"])?;?[ \t]*$""", "", code, flags=re.M)
+    return re.sub(r"^[ \t]*(?:const|let|var)\s*\{[^}]*\}\s*=\s*(?:window\.)?React\s*;?[ \t]*$", "", code, flags=re.M)  # хуки уже глобальные
+
+def norm_html(h):
+    return re.sub(r"(<script(?![^>]*\bsrc=)[^>]*type=\"text/babel\"[^>]*>)(.*?)(</script>)", lambda m: m.group(1) + norm_js(m.group(2), "index") + m.group(3), h, flags=re.S)
+
+def norm_file(path, c):
+    return norm_js(c, path) if path.endswith((".js", ".jsx")) else norm_html(c) if path.endswith(".html") else c
+
+def norm_files(fs): return {k: norm_file(k, c) for k, c in fs.items()}
+
 def apply(pid, text):
     """Применяет закрытые теги Dyad. Возвращает {путь: {path, status A/M/D/R, add, del}}."""
     out = {}
@@ -49,7 +69,7 @@ def apply(pid, text):
         if kind == "dyad-chat-summary":
             if not jload(pid, "meta.json", {}).get("custom"): jsave(pid, "meta.json", {"title": body.strip()})
         elif kind == "dyad-write" and (p := safe(pid, at.get("path", ""))):
-            new = re.sub(r"^```\w*\n|\n```\s*$", "", body.strip("\n")); old = p.read_text() if p.exists() else None
+            new = re.sub(r"^```\w*\n|\n```\s*$", "", body.strip("\n")); new = norm_file(at["path"], new); old = p.read_text() if p.exists() else None
             p.parent.mkdir(parents=True, exist_ok=True); p.write_text(new); ad, de = cnt(old, new)
             out[at["path"]] = {"path": at["path"], "status": "A" if old is None else "M", "add": ad, "del": de}
         elif kind == "dyad-delete" and (p := safe(pid, at.get("path", ""))) and p.is_file():
@@ -60,11 +80,17 @@ def apply(pid, text):
     return out
 
 def lint(fs):
-    """Быстрые проверки того, что чаще всего ломает приложение: дубли имён и ссылки на несуществующие файлы."""
+    """Быстрые проверки того, что чаще всего ломает приложение: дубли имён, чужие библиотеки, ссылки на несуществующие файлы."""
     issues, seen = [], {}
     for k, c in fs.items():
-        if k.endswith((".js", ".jsx")):
-            for m in re.finditer(r"^(const|let|class|function|var)\s+(\w+)", c, re.M): seen.setdefault(m.group(2), []).append((k, m.group(1)))
+        if not k.endswith((".js", ".jsx")): continue
+        for m in re.finditer(r"^(const|let|class|function|var)\s+(\w+)", c, re.M): seen.setdefault(m.group(2), []).append((k, m.group(1)))
+        for m in re.finditer(r"^(const|let|var)\s*\{([^}]*)\}", c, re.M):
+            for part in m.group(2).split(","):
+                n = part.split(":")[-1].split("=")[0].strip()
+                if re.fullmatch(r"\w+", n): seen.setdefault(n, []).append((k, "const"))
+        for pkg in re.findall(r"""^\s*import\s[^;]*?from\s*['"]([^./'"][^'"]*)['"]""", c, re.M):
+            issues.append(f"{k}: библиотека '{pkg}' недоступна (нет npm). Используй только React и Tailwind, графики и иконки делай на SVG/CSS")
     for n, ds in seen.items():
         if len(ds) > 1 and any(d[1] in ("const", "let", "class") for d in ds):
             issues.append(f"`{n}` объявлено повторно ({', '.join(sorted({d[0] for d in ds}))}); оставь ровно одно объявление")
@@ -85,6 +111,7 @@ addEventListener('error',function(e){if(e.message&&e.message!=='Script error.')s
 addEventListener('unhandledrejection',function(e){show('ERROR: '+(e.reason&&e.reason.message||e.reason))});
 addEventListener('DOMContentLoaded',function(){if(!window.Babel)return;document.querySelectorAll('script[type="text/babel"]').forEach(function(s){try{Babel.transform(s.textContent,{presets:['react']})}catch(e){show('SYNTAX ['+(s.getAttribute('data-name')||'index.html')+']: '+e.message)}})});
 })();
+if(window.React){Object.keys(React).forEach(function(k){if(/^[A-Za-z_$][\w$]*$/.test(k)&&!(k in window))window[k]=React[k]})}
 window.downloadFile=function(n,d,m){var b=new Blob([d],{type:m||"application/octet-stream"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=n;document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},500)};
 window.toCSV=function(rows){if(!rows||!rows.length)return"";var Q="\x22",k=Object.keys(rows[0]),q=function(v){v=v==null?"":String(v);return /[;\n\x22]/.test(v)?Q+v.replace(/\x22/g,Q+Q)+Q:v};return "\uFEFF"+[k.join(";")].concat(rows.map(function(r){return k.map(function(c){return q(r[c])}).join(";")})).join("\r\n")};
 window.pickFile=function(accept,cb){var i=document.createElement("input");i.type="file";i.accept=accept||"";i.onchange=function(){var f=i.files[0];if(!f)return;var r=new FileReader();r.onload=function(){cb(r.result,f)};r.readAsText(f)};i.click()};
@@ -96,6 +123,7 @@ def runtime():
     return CDN + ERR
 def bundle(fs):
     """Инлайнит локальные <script src> и <link href> проекта в один HTML."""
+    fs = norm_files(fs)
     h = re.sub(r'<script[^>]*src="https?://[^"]*(?:tailwindcss|react|babel)[^"]*"[^>]*></script>', "", fs.get("index.html", ""))
     n = lambda x: re.sub(r"^\.?/", "", x)
     h = re.sub(r'<script([^>]*?)\s+src="([^"]+)"([^>]*)></script>',
@@ -145,7 +173,7 @@ def export_zip(pid, fs):
     with zipfile.ZipFile(b, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("main.py", main)
         z.writestr("requirements.txt", "streamlit>=1.40\n")
-        for k, c in fs.items(): z.writestr(f"site/{k}", c)  # index.html сохраняет <!--RUNTIME-->, main.py подставляет React
+        for k, c in norm_files(fs).items(): z.writestr(f"site/{k}", c)  # index.html сохраняет <!--RUNTIME-->, main.py подставляет React
         for n in have: z.write(v / n, f"site/vendor/{n}")
         z.writestr("Dockerfile", 'FROM python:3.12-slim\nWORKDIR /app\nCOPY . .\nRUN pip install --no-cache-dir -r requirements.txt\n'
                    'EXPOSE 8501\nCMD ["streamlit","run","main.py","--server.port=8501","--server.address=0.0.0.0"]\n')
