@@ -1,55 +1,21 @@
-"""Vibe Studio v2: Dyad-подобный MVP на Streamlit. Превью в той же странице, приложения = HTML + React (без сборки).
+"""Vibe Studio: Python-движок (Streamlit) + интерфейс на HTML/JS в папке frontend/ (компонент без сборки).
 Промпты адаптированы из Dyad (Apache-2.0), см. prompts.py."""
-import io, json, os, re, uuid, shutil, time, zipfile, html as H
+import base64, io, json, os, re, shutil, threading, time, uuid, zipfile
 from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 from openai import OpenAI
 import prompts as P
 
-ROOT = Path(os.getenv("PROJECTS_DIR", "projects")); ROOT.mkdir(exist_ok=True)
-SETF = ROOT / "settings.json"  # base_url и модель сохраняются на диск, API-ключ только в сессии
-def get_client():
-    return OpenAI(base_url=st.session_state.base_url.strip() or None, api_key=st.session_state.api_key.strip() or "none")
+HERE = Path(__file__).parent
+ROOT = Path(os.getenv("PROJECTS_DIR", HERE / "projects")); ROOT.mkdir(exist_ok=True)
+SETF = ROOT / "settings.json"
+studio = components.declare_component("vibe_studio", path=str(HERE / "frontend"))
+S = st.session_state
 
 TAGS = re.compile(r'<(think|dyad-write|dyad-rename|dyad-delete|dyad-chat-summary|dyad-suggested-prompts|dyad-plan'
                   r'|dyad-security-finding|dyad-command)\b([^>]*)>(.*?)(</\1>|$)', re.S)
 ATTR = re.compile(r'([\w-]+)="([^"]*)"')
-CSS = """<style>
-:root{--g1:#16a34a;--g2:#15803d;--line:#cfe5d7}
-.stApp{background:linear-gradient(180deg,#f6fbf7 0%,#eaf6ee 100%)}
-.block-container{padding-top:1rem;max-width:100%}
-header[data-testid="stHeader"]{background:transparent}
-[data-testid="stSidebar"]{background:linear-gradient(180deg,#0b2e1f,#114030)}
-[data-testid="stSidebar"] *{color:#e7f6ec}
-[data-testid="stSidebar"] .stButton>button{background:var(--g1);color:#fff;border:0}
-.brand{display:flex;align-items:center;gap:10px;margin:4px 0 16px}.brand b{font-size:19px;letter-spacing:.2px}
-.brand small{display:block;font-size:11px;opacity:.7;font-weight:400}
-.logo{width:36px;height:36px;border-radius:11px;background:linear-gradient(135deg,#86efac,#16a34a);display:grid;place-items:center;color:#06240f;font-weight:800;box-shadow:0 4px 14px rgba(22,163,74,.45)}
-.stButton>button,.stDownloadButton>button{border-radius:10px;border:1px solid var(--line);background:#fff;color:#14532d;font-weight:500;transition:all .15s}
-.stButton>button:hover,.stDownloadButton>button:hover{border-color:var(--g1);color:var(--g2);transform:translateY(-1px);box-shadow:0 6px 16px rgba(22,163,74,.18)}
-.stButton>button[kind="primary"]{background:var(--g1);color:#fff;border:0}
-[data-testid="stChatMessage"]{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 14px;box-shadow:0 1px 3px rgba(16,64,40,.05)}
-[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]){background:#e6f6ec}
-[data-testid="stChatInput"]{border-radius:14px;border:1px solid var(--line)}
-.stTabs [aria-selected="true"]{color:var(--g2);font-weight:600}.stTabs [data-baseweb="tab-highlight"]{background:var(--g1)}
-iframe{border:1px solid var(--line);border-radius:14px;background:#fff}
-.card{border:1px solid var(--line);border-radius:12px;margin:8px 0;background:#fff;font-size:13px}
-.card summary{padding:9px 12px;cursor:pointer;color:#14532d}.card .st{float:right;color:var(--g1);font-weight:700}.card .w{color:#d97706}
-.card pre{margin:0;padding:10px 12px;max-height:240px;overflow:auto;border-top:1px solid var(--line);background:#f3faf5;color:#3f5b4b;font-size:12px;white-space:pre-wrap}
-/* тема без config.toml: перекраска стандартных элементов Streamlit */
-a{color:var(--g2)}
-[data-baseweb="input"]:focus-within,[data-baseweb="textarea"]:focus-within,[data-baseweb="select"]:focus-within,[data-testid="stChatInput"]:focus-within{border-color:var(--g1)!important;box-shadow:0 0 0 2px rgba(22,163,74,.2)!important}
-[data-testid="stChatInputSubmitButton"]{color:var(--g1)}
-[data-testid="stRadio"] label[data-baseweb="radio"]>div:first-child{display:none}
-[data-testid="stRadio"] label[data-baseweb="radio"]{padding:6px 14px;border-radius:999px;border:1px solid var(--line);background:#fff;margin-right:4px;transition:all .15s}
-[data-testid="stRadio"] label[data-baseweb="radio"]:hover{border-color:var(--g1)}
-[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked){background:var(--g1);border-color:var(--g1)}
-[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) *{color:#fff!important}
-[data-testid="stSidebar"] [data-testid="stRadio"] label[data-baseweb="radio"]{background:transparent;border-color:rgba(255,255,255,.15);border-radius:10px;width:100%}
-[data-testid="stSidebar"] [data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked){background:var(--g1)}
-[data-testid="stExpander"],[data-testid="stPopover"]>button{border-radius:12px}
-</style>"""
 
 # ---------- проекты ----------
 def pdir(pid): return ROOT / pid
@@ -98,37 +64,6 @@ def lint(fs):
     for ref in re.findall(r'<(?:script[^>]*src|link[^>]*href)="([^"]+)"', fs.get("index.html", "")):
         if not ref.startswith(("http", "//", "data:")) and nrm(ref) not in fs: issues.append(f"index.html ссылается на несуществующий файл {ref}")
     return issues
-
-# ---------- рендер чата ----------
-def card(icon, title, sub="", status="", body="", open_=False):
-    st.markdown(f'<details class="card" {"open" if open_ else ""}><summary>{icon} <b>{H.escape(title)}</b> '
-                f'<i>{H.escape(sub)}</i>{status}</summary>{f"<pre>{H.escape(body[-2500:])}</pre>" if body else ""}</details>',
-                unsafe_allow_html=True)
-
-def render(container, text, streaming=False):
-    text = re.sub(r"<[^>]*$", "", text)  # недописанный тег в хвосте стрима
-    with container.container():
-        pos = 0
-        for m in TAGS.finditer(text):
-            if text[pos:m.start()].strip(): st.markdown(text[pos:m.start()])
-            pos = m.end()
-            kind, a, body, done = m.group(1), dict(ATTR.findall(m.group(2))), m.group(3), bool(m.group(4))
-            ok = '<span class="st">✓</span>' if done else '<span class="st w">⏳</span>'
-            if kind == "think": card("💭", "Размышления" if done else "Думаю…", status=ok, body=body, open_=not done)
-            elif kind == "dyad-write": card("✏️", a.get("path", "?"), a.get("description", ""), ok, body, not done)
-            elif kind == "dyad-rename": card("🔁", f'{a.get("from")} → {a.get("to")}', status=ok)
-            elif kind == "dyad-delete": card("🗑", a.get("path", "?"), status=ok)
-            elif kind == "dyad-plan":
-                with st.container(border=True): st.markdown("**📋 План реализации**"); st.markdown(body)
-            elif kind == "dyad-security-finding":
-                lv = a.get("level", "low"); badge = {"critical": "🔴", "high": "🟠", "medium": "🟡"}.get(lv, "🔵")
-                with st.container(border=True): st.markdown(f"**{badge} {a.get('title', '')}** · `{lv}`"); st.markdown(body)
-        tail = text[pos:]
-        if tail.strip() or streaming: st.markdown(tail + ("▌" if streaming else ""))
-
-def suggestions(text):
-    m = re.search(r"<dyad-suggested-prompts[^>]*>(.*?)</dyad-suggested-prompts>", text, re.S)
-    return [l.strip() for l in m.group(1).splitlines() if l.strip()][:3] if m else []
 
 # ---------- превью и экспорт ----------
 CDN = ('<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>'
@@ -229,109 +164,109 @@ def system_for(mode, fs):
     base = {"Build": P.THINKING + "\n" + P.BUILD_PREFIX + "\n\n" + P.AI_RULES + "\n\n" + P.BUILD_POSTFIX, "Ask": P.ASK, "Plan": P.PLAN}[mode]
     return base + ctx
 
-# ---------- UI ----------
-st.set_page_config(page_title="Vibe Studio", page_icon="🌿", layout="wide", initial_sidebar_state="expanded")
-st.markdown(CSS, unsafe_allow_html=True)
-if "pid" not in st.session_state: st.session_state.pid = new_project()
-st.session_state.setdefault("mode", "Build"); st.session_state.setdefault("rev", 0)
+def preview_html(fs, pid):
+    """HTML для превью; localStorage приложения изолируется по проекту (общий origin компонента)."""
+    ns = ('<script>(function(){var p=%s+":",o=Storage.prototype,g=o.getItem,s=o.setItem,r=o.removeItem;'
+          'o.getItem=function(k){return g.call(this,p+k)};o.setItem=function(k,v){return s.call(this,p+k,v)};'
+          'o.removeItem=function(k){return r.call(this,p+k)}})()</script>') % json.dumps(pid)
+    h = bundle(fs)
+    return h.replace("<head>", "<head>" + ns, 1) if "<head>" in h else ns + h
+
+# ---------- задачи LLM: поток идёт в фоне, интерфейс опрашивает состояние ----------
+@st.cache_resource
+def jobs(): return {}
+
+def client(): return OpenAI(base_url=S.base_url.strip() or None, api_key=S.api_key.strip() or "none")
+
+def run_llm(job, cl, model, system, history):
+    try:
+        for ch in cl.chat.completions.create(model=model, stream=True, messages=[{"role": "system", "content": system}] + history):
+            if job["stop"]: break
+            if ch.choices: job["text"] += ch.choices[0].delta.content or ""
+    except Exception as e:
+        job["text"] += f"\n\n⚠️ Ошибка LLM: {e}"
+    job["done"] = True
+
+def current_job():
+    j = jobs().get(S.get("job"))
+    if not j: S.job = None
+    return j
+
+def start_job(pid, mode, prompt):
+    msgs = jload(pid, "chat.json", []) + [{"role": "user", "content": prompt}]; jsave(pid, "chat.json", msgs)
+    job = {"text": "", "done": False, "stop": False, "pid": pid, "mode": mode, "prompt": prompt}
+    jid = uuid.uuid4().hex; jobs()[jid] = job; S.job = jid
+    hist = [{"role": m["role"], "content": m["content"]} for m in msgs]
+    threading.Thread(target=run_llm, daemon=True, args=(job, client(), S.model, system_for(mode, files(pid)), hist)).start()
+
+def finalize():
+    """Если фоновая генерация закончилась: применить файлы, сохранить версию, при необходимости запустить автоисправление."""
+    job = current_job()
+    if not job or not job["done"]: return
+    pid, acc = job["pid"], job["text"]
+    changed = apply(pid, acc) if job["mode"] == "Build" else False
+    msgs = jload(pid, "chat.json", [])
+    if not jload(pid, "meta.json", {}).get("title"): jsave(pid, "meta.json", {"title": msgs[0]["content"][:40]})
+    msgs.append({"role": "assistant", "content": acc, "version": snapshot(pid) if changed else None}); jsave(pid, "chat.json", msgs)
+    jobs().pop(S.job, None); S.job = None
+    issues = lint(files(pid)) if changed else []
+    if issues and not job["prompt"].startswith("Автопроверка"):   # одна автоматическая попытка исправления
+        start_job(pid, "Build", "Автопроверка нашла проблемы, исправь:\n- " + "\n- ".join(issues))
+
+# ---------- состояние для интерфейса и обработка событий ----------
+def plist(): return sorted([p.name for p in ROOT.iterdir() if p.is_dir() and ((p / "chat.json").exists() or p.name == S.pid)], reverse=True)
+
+def build_state():
+    pid = S.pid; fs = files(pid); job = current_job()
+    return dict(projects=[{"id": p, "title": jload(p, "meta.json", {}).get("title", p)} for p in plist()], pid=pid,
+                messages=jload(pid, "chat.json", []), files=fs, preview=preview_html(fs, pid) if fs.get("index.html") else "",
+                busy=bool(job), live=job["text"] if job else "", inspiration=P.INSPIRATION, models=S.get("models", []),
+                settings={"base_url": S.base_url, "model": S.model, "has_key": bool(S.api_key)},
+                sec=S.get(f"sec_{pid}", ""), dl=S.pop("dl", None), notice=S.pop("notice", None))
+
+def handle(ev):
+    """Возвращает True, если состояние изменилось и интерфейс нужно перерисовать."""
+    t, pid = ev.get("type"), S.pid
+    if t == "poll": return False
+    if t == "stop":
+        if current_job(): current_job()["stop"] = True
+        return True
+    if t in ("settings", "models"):
+        S.base_url, S.model = ev.get("base_url", S.base_url), ev.get("model", S.model) or S.model
+        if ev.get("api_key"): S.api_key = ev["api_key"]
+        SETF.write_text(json.dumps({"base_url": S.base_url, "model": S.model}))
+        if t == "models":
+            try: S.models = sorted(m.id for m in client().models.list())
+            except Exception as e: S.models = []; S.notice = f"Не удалось получить список моделей: {e}"
+        else: S.notice = "Настройки сохранены"
+        return True
+    if current_job(): return False                       # во время генерации остальные события игнорируются
+    if t == "send": S.mode = ev["mode"]; start_job(pid, ev["mode"], ev["text"])
+    elif t == "new": S.pid = new_project()
+    elif t == "select": S.pid = ev["pid"]
+    elif t == "restore": restore(pid, int(ev["version"]))
+    elif t == "export": S.dl = {"id": uuid.uuid4().hex, "name": f"{pid}.zip", "b64": base64.b64encode(export_zip(pid, files(pid))).decode()}
+    elif t == "review":
+        try:
+            ctx = "\n".join(f'<file path="{k}">\n{v}\n</file>' for k, v in files(pid).items())
+            r = client().chat.completions.create(model=S.model, messages=[{"role": "system", "content": P.SECURITY + "\n\n" + ctx}, {"role": "user", "content": "Run the security review."}])
+            S[f"sec_{pid}"] = r.choices[0].message.content
+        except Exception as e: S.notice = f"Ошибка security review: {e}"
+    return True
+
+# ---------- запуск ----------
+st.set_page_config(page_title="Vibe Studio", page_icon="🌿", layout="wide", initial_sidebar_state="collapsed")
+st.markdown("""<style>header[data-testid="stHeader"],footer,#MainMenu{display:none!important}
+.block-container{padding:0!important;max-width:100%!important}.stApp{background:#f3faf5}
+[data-testid="stCustomComponentV1"] iframe,iframe[title*="vibe_studio"]{width:100%;height:100vh!important;border:0}</style>""", unsafe_allow_html=True)
 _s = json.loads(SETF.read_text()) if SETF.exists() else {}
-st.session_state.setdefault("base_url", _s.get("base_url", os.getenv("LLM_BASE_URL", "")))
-st.session_state.setdefault("model", _s.get("model", os.getenv("LLM_MODEL", "gpt-4o")))
-st.session_state.setdefault("api_key", os.getenv("LLM_API_KEY", ""))
-queue = st.session_state.pop("queue", None)           # (режим, текст) от кнопок: чипы, inspiration, «принять план»
-if queue: st.session_state.mode = queue[0]
-
-with st.sidebar:
-    st.markdown('<div class="brand"><div class="logo">V</div><div><b>Vibe Studio</b><small>AI-разработка приложений</small></div></div>', unsafe_allow_html=True)
-    if st.button("＋ Новое приложение", use_container_width=True): st.session_state.pid = new_project(); st.rerun()
-    ps = sorted([p.name for p in ROOT.iterdir() if p.is_dir() and ((p / "chat.json").exists() or p.name == st.session_state.pid)], reverse=True)
-    if st.session_state.pid not in ps: st.session_state.pid = ps[0]
-    st.session_state.pid = st.radio("Проекты", ps, index=ps.index(st.session_state.pid),
-                                    format_func=lambda x: jload(x, "meta.json", {}).get("title", x))
-with st.popover("⚙️ Настройки LLM: ключ, URL, модель"):
-    st.text_input("Base URL", key="base_url", placeholder="https://api.openai.com/v1")
-    st.text_input("API key", key="api_key", type="password")
-    st.text_input("Модель", key="model", placeholder="gpt-4o")
-    if st.button("Загрузить список моделей", use_container_width=True):
-        try: st.session_state.models = sorted(m.id for m in get_client().models.list())
-        except Exception as e: st.error(f"Не удалось получить список: {e}")
-    if st.session_state.get("models"):
-        st.selectbox("Выбрать из списка", st.session_state.models, index=None, placeholder="Выберите модель",
-                     key="model_pick", on_change=lambda: st.session_state.update(model=st.session_state.model_pick))
-    SETF.write_text(json.dumps({"base_url": st.session_state.base_url, "model": st.session_state.model}))
-pid = st.session_state.pid
-msgs = jload(pid, "chat.json", []); fs = files(pid)
-
-chat, side = st.columns([4, 6], gap="medium")
-with chat:
-    st.radio("Режим", ["Build", "Ask", "Plan"], horizontal=True, key="mode", label_visibility="collapsed",
-             format_func=lambda x: {"Build": "🛠 Build", "Ask": "💬 Ask", "Plan": "📋 Plan"}[x])
-    if not st.session_state.api_key: st.warning("Введите API-ключ: кнопка «⚙️ Настройки LLM» вверху страницы.")
-    box = st.container(height=600, border=False)
-    with box:
-        if not msgs:
-            st.markdown("#### Что построим?")
-            cols = st.columns(2)
-            for i, (label, text) in enumerate(P.INSPIRATION):
-                if cols[i % 2].button(label, key=f"insp{i}", use_container_width=True):
-                    st.session_state.queue = ("Build", text); st.rerun()
-        for i, m in enumerate(msgs):
-            with st.chat_message(m["role"]):
-                render(st.empty(), m["content"])
-                if m["role"] == "assistant" and m.get("version"):
-                    c1, c2 = st.columns([1, 1]); c1.caption(f"Версия {m['version']}")
-                    if c2.button("↩ Вернуть версию", key=f"r{i}"): restore(pid, m["version"]); st.rerun()
-        if msgs and msgs[-1]["role"] == "assistant":
-            last = msgs[-1]["content"]
-            if "<dyad-plan" in last and st.button("✅ Принять план и реализовать", type="primary"):
-                st.session_state.queue = ("Build", "План принят. Реализуй его."); st.rerun()
-            for j, s in enumerate(suggestions(last)):
-                if st.button(f"💡 {s}", key=f"s{j}"): st.session_state.queue = ("Build", s); st.rerun()
-    typed = st.chat_input("Что построим или поправим?")
-    send = queue or ((st.session_state.mode, typed) if typed else None)
-    if send:
-        mode, prompt = send
-        msgs.append({"role": "user", "content": prompt})
-        with box:
-            with st.chat_message("user"): st.markdown(prompt)
-            with st.chat_message("assistant"):
-                ph = st.empty(); acc = ""
-                try:
-                    stream = get_client().chat.completions.create(model=st.session_state.model, stream=True,
-                        messages=[{"role": "system", "content": system_for(mode, fs)}] + [{"role": m["role"], "content": m["content"]} for m in msgs])
-                    for ch in stream:
-                        acc += (ch.choices[0].delta.content or "") if ch.choices else ""
-                        render(ph, acc, streaming=True)
-                except Exception as e:
-                    acc += f"\n\n⚠️ Ошибка LLM: {e}"
-        changed = apply(pid, acc) if mode == "Build" else False
-        if not jload(pid, "meta.json", {}).get("title"): jsave(pid, "meta.json", {"title": msgs[0]["content"][:40]})
-        msgs.append({"role": "assistant", "content": acc, "version": snapshot(pid) if changed else None})
-        jsave(pid, "chat.json", msgs)
-        issues = lint(files(pid)) if changed else []
-        if issues and not prompt.startswith("Автопроверка"):   # одна автоматическая попытка исправления
-            st.session_state.queue = ("Build", "Автопроверка нашла проблемы, исправь:\n- " + "\n- ".join(issues))
-        st.rerun()
-
-with side:
-    t1, t2, t3 = st.tabs(["👁 Превью", "</> Код", "⬇ Экспорт и проверка"])
-    with t1:
-        if st.button("🔄 Обновить превью"): st.session_state.rev += 1
-        if fs.get("index.html"): components.html(bundle(fs) + f"<!--{st.session_state.rev}-->", height=620, scrolling=True)
-        else: st.caption("Превью появится после первой генерации (режим Build).")
-        with st.expander("🛠 Исправить ошибку"):
-            err = st.text_area("Текст красной плашки из превью", label_visibility="collapsed")
-            if st.button("Fix error") and err:
-                st.session_state.queue = ("Build", f"В превью ошибка, исправь:\n{err}"); st.rerun()
-    with t2:
-        if fs: st.code(fs[(f := st.selectbox("Файл", list(fs)))], language="html" if f.endswith("html") else "javascript", line_numbers=True)
-    with t3:
-        if fs:
-            st.download_button("Скачать набор (zip)", export_zip(pid, fs), f"{pid}.zip", use_container_width=True)
-            if st.button("🛡 Security review", use_container_width=True):
-                with st.spinner("Анализирую код…"):
-                    ctx = "\n".join(f'<file path="{k}">\n{v}\n</file>' for k, v in fs.items())
-                    r = get_client().chat.completions.create(model=st.session_state.model, messages=[{"role": "system", "content": P.SECURITY + "\n\n" + ctx},
-                                                                              {"role": "user", "content": "Run the security review."}])
-                    st.session_state[f"sec_{pid}"] = r.choices[0].message.content
-            if st.session_state.get(f"sec_{pid}"): render(st.empty(), st.session_state[f"sec_{pid}"])
+S.setdefault("base_url", _s.get("base_url", os.getenv("LLM_BASE_URL", ""))); S.setdefault("model", _s.get("model", os.getenv("LLM_MODEL", "gpt-4o")))
+S.setdefault("api_key", os.getenv("LLM_API_KEY", "")); S.setdefault("mode", "Build")
+if "pid" not in S:
+    old = sorted([p.name for p in ROOT.iterdir() if p.is_dir() and (p / "chat.json").exists()], reverse=True)
+    S.pid = old[0] if old else new_project()
+finalize()
+ev = studio(state=build_state(), key="studio", default=None)
+if ev and ev.get("id") != S.get("last_ev"):
+    S.last_ev = ev["id"]
+    if handle(ev): st.rerun()
