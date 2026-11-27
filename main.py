@@ -16,7 +16,7 @@ TAGS = re.compile(r'<(think|dyad-write|dyad-rename|dyad-delete|dyad-chat-summary
                   r'|dyad-security-finding|dyad-command)\b([^>]*)>(.*?)(</\1>|$)', re.S)
 ATTR = re.compile(r'([\w-]+)="([^"]*)"')
 CSS = """<style>
-.block-container{padding-top:1rem;max-width:100%}header{visibility:hidden}
+.block-container{padding-top:1rem;max-width:100%}header[data-testid="stHeader"]{background:transparent}
 .card{border:1px solid #3a3f4b;border-radius:10px;margin:8px 0;background:#1b1e26;font-size:13px}
 .card summary{padding:8px 12px;cursor:pointer;color:#c9d1d9}.card .st{float:right;color:#7ee787}.card .w{color:#f0b429}
 .card pre{margin:0;padding:10px 12px;max-height:240px;overflow:auto;border-top:1px solid #3a3f4b;color:#9da7b3;font-size:12px;white-space:pre-wrap}
@@ -124,7 +124,7 @@ def system_for(mode, fs):
     return base + ctx
 
 # ---------- UI ----------
-st.set_page_config(page_title="Vibe Studio", layout="wide")
+st.set_page_config(page_title="Vibe Studio", layout="wide", initial_sidebar_state="expanded")
 st.markdown(CSS, unsafe_allow_html=True)
 if "pid" not in st.session_state: st.session_state.pid = new_project()
 st.session_state.setdefault("mode", "Build"); st.session_state.setdefault("rev", 0)
@@ -142,7 +142,7 @@ with st.sidebar:
     if st.session_state.pid not in ps: st.session_state.pid = ps[0]
     st.session_state.pid = st.radio("Проекты", ps, index=ps.index(st.session_state.pid),
                                     format_func=lambda x: jload(x, "meta.json", {}).get("title", x))
-with st.sidebar.expander("⚙️ Настройки LLM", expanded=not st.session_state.api_key):
+with st.popover("⚙️ Настройки LLM: ключ, URL, модель"):
     st.text_input("Base URL", key="base_url", placeholder="https://api.openai.com/v1")
     st.text_input("API key", key="api_key", type="password")
     st.text_input("Модель", key="model", placeholder="gpt-4o")
@@ -160,6 +160,7 @@ chat, side = st.columns([4, 6], gap="medium")
 with chat:
     st.radio("Режим", ["Build", "Ask", "Plan"], horizontal=True, key="mode", label_visibility="collapsed",
              format_func=lambda x: {"Build": "🛠 Build", "Ask": "💬 Ask", "Plan": "📋 Plan"}[x])
+    if not st.session_state.api_key: st.warning("Введите API-ключ: кнопка «⚙️ Настройки LLM» вверху страницы.")
     box = st.container(height=600, border=False)
     with box:
         if not msgs:
