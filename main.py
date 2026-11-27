@@ -37,6 +37,18 @@ iframe{border:1px solid var(--line);border-radius:14px;background:#fff}
 .card{border:1px solid var(--line);border-radius:12px;margin:8px 0;background:#fff;font-size:13px}
 .card summary{padding:9px 12px;cursor:pointer;color:#14532d}.card .st{float:right;color:var(--g1);font-weight:700}.card .w{color:#d97706}
 .card pre{margin:0;padding:10px 12px;max-height:240px;overflow:auto;border-top:1px solid var(--line);background:#f3faf5;color:#3f5b4b;font-size:12px;white-space:pre-wrap}
+/* тема без config.toml: перекраска стандартных элементов Streamlit */
+a{color:var(--g2)}
+[data-baseweb="input"]:focus-within,[data-baseweb="textarea"]:focus-within,[data-baseweb="select"]:focus-within,[data-testid="stChatInput"]:focus-within{border-color:var(--g1)!important;box-shadow:0 0 0 2px rgba(22,163,74,.2)!important}
+[data-testid="stChatInputSubmitButton"]{color:var(--g1)}
+[data-testid="stRadio"] label[data-baseweb="radio"]>div:first-child{display:none}
+[data-testid="stRadio"] label[data-baseweb="radio"]{padding:6px 14px;border-radius:999px;border:1px solid var(--line);background:#fff;margin-right:4px;transition:all .15s}
+[data-testid="stRadio"] label[data-baseweb="radio"]:hover{border-color:var(--g1)}
+[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked){background:var(--g1);border-color:var(--g1)}
+[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) *{color:#fff!important}
+[data-testid="stSidebar"] [data-testid="stRadio"] label[data-baseweb="radio"]{background:transparent;border-color:rgba(255,255,255,.15);border-radius:10px;width:100%}
+[data-testid="stSidebar"] [data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked){background:var(--g1)}
+[data-testid="stExpander"],[data-testid="stPopover"]>button{border-radius:12px}
 </style>"""
 
 # ---------- проекты ----------
