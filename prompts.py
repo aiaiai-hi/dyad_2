@@ -69,6 +69,12 @@ AI_RULES = """# Tech Stack (runtime of this studio)
   function declarations. Mount the app in the last script: ReactDOM.createRoot(document.getElementById('root')).render(<App />).
 - Styling: Tailwind utility classes. Custom CSS only in styles.css linked via <link rel="stylesheet" href="styles.css">.
 - Icons: inline SVG or emoji (no icon packages). Build UI components yourself with Tailwind (no shadcn available).
+- STRICT SYNTAX RULES (the code is compiled in the browser, one mistake breaks the whole app):
+  1. Never declare the same top-level name (const/let/class/function) in two files or twice. Declare each constant ONCE.
+  2. Strings containing an apostrophe or quotes: use double quotes or template literals, e.g. "узкие 'места'". Never nest the same quote type.
+  3. JSX attributes only inside the opening tag: className={cond ? "a" : "b"} must contain ALL classes, never put extra words after }.
+  4. Every file listed in <script src> / <link href> must exist (create it with <dyad-write>). Do NOT add CDN scripts for React, Babel or Tailwind (already provided).
+  5. Re-read your code for balanced brackets, tags and quotes before finishing.
 - Persist data in localStorage. Routing: simple state or hash-based routing."""
 
 BUILD_POSTFIX = """Directory names MUST be all lower-case. File names may be mixed-case.
